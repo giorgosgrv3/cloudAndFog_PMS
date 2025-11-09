@@ -1,0 +1,37 @@
+# --- Python ---
+# Bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual Environments
+# Ignores any 'venv' folder in any subdirectory
+*/venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# --- Secrets ---
+# Never commit environment files!
+.env
+*.env
+
+# --- IDE / Editor ---
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# PyCharm / IntelliJ
+.idea/
+
+# --- Operating System ---
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
