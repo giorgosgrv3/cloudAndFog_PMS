@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from pydantic import ConfigDict
 from models import Role
 
+# these are provided when we create a user
 class UserCreate(BaseModel):
     username:   str = Field(min_length=3, max_length=64)
     email:      EmailStr
@@ -9,6 +10,7 @@ class UserCreate(BaseModel):
     first_name: str = Field(min_length=1, max_length=64)
     last_name:  str = Field(min_length=1, max_length=64)
 
+#these are what is SHOWN when we do GET /users
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     username:   str

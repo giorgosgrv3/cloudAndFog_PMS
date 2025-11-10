@@ -11,7 +11,6 @@ from security import (
     get_current_user,
     get_current_admin_user
 )
-from schemas import UserCreate, UserOut, Token
 from models import User, Role
 from db import get_db
 

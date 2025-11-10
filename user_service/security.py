@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session # Νέο Import
 from models import Role, User # Νέο Import
 from schemas import TokenData # Νέο Import
 from db import get_db # Νέο Import
+import os # <-- ΠΡΟΣΘΕΣΕ ΑΥΤΟ
 
 # --- Ρυθμίσεις Ασφαλείας ---
-SECRET_KEY = "your-super-secret-key-please-change-me"
+SECRET_KEY = os.getenv("SECRET_KEY", "default_secret_please_change")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

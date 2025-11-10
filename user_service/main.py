@@ -5,6 +5,9 @@ from routes import router as users_router
 from models import Base
 from db import engine
 
+from dotenv import load_dotenv
+load_dotenv() # Αυτό διαβάζει το .env και φορτώνει τις μεταβλητές
+
 app = FastAPI(title="User Service", version="0.1.0")
 
 app.add_middleware(
