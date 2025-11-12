@@ -56,7 +56,20 @@ services:
     volumes:
       - ./team_service:/app
     restart: unless-stopped
+  
+  task_service: # <--- NEW SERVICE
+    build: ./task_service
+    container_name: task_service
+    env_file:
+      - ./.env
+    depends_on:
+      mongo_db:
+        condition: service_started
+    ports: ["8003:8003"] # <-- New port
+    volumes:
+      - ./task_service:/app
+    restart: unless-stopped
 
 volumes:
   mysql_data:
-  mongo_data: # <-- NEW!
+  mongo_data:

@@ -143,3 +143,40 @@ async def get_team_leader_only(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You are not authorized to manage members for this team."
     )
+
+# This is used during the task creation.
+async def get_team_access_or_admin(
+    team_id: str,
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+) -> Team:
+    """
+    Dependency that checks if a user is an ADMIN OR a MEMBER of the specific team.
+    Returns the team document if authorized.
+    """
+    # Ambiguous error used when the team is not found OR access is denied.
+    ambiguous_error = HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="The requested resource was not found or is inaccessible."
+    )
+
+    try:
+        obj_id = ObjectId(team_id)
+    except Exception:
+        # Keep this technical error separate, as it's helpful for developers
+        raise HTTPException(status_code=400, detail="Invalid team ID format") 
+
+    team_doc = await db["teams"].find_one({"_id": obj_id})
+    
+    # 1. 404 SCENARIO: Team not found. We return the ambiguous error immediately.
+    if not team_doc:
+        raise ambiguous_error 
+
+    team = Team(**team_doc)
+    
+    # 2. 403 SCENARIO: User is Admin OR user is a member
+    if current_user.role == Role.ADMIN or current_user.username in team.member_ids:
+        return team # Success!
+    
+    # 3. FINAL BLOCKING: If they are not Admin and not a member, block with the same ambiguous error.
+    raise ambiguous_error

@@ -5,12 +5,25 @@ from typing import List
 from db import get_database
 from schemas import TeamCreate, TeamOut, TokenData, Role, TeamUpdate, MemberAdd, LeaderAssign
 from models import Team
-from security import get_current_user, get_current_admin_user, get_team_leader_or_admin, get_team_leader_only
+from security import get_current_user, get_current_admin_user, get_team_leader_or_admin, get_team_leader_only, get_team_access_or_admin
 from bson import ObjectId # For querying by ID
 import httpx
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
+@router.get("/{team_id}", response_model=TeamOut)
+async def get_team_details(
+    team_id: str, # We need this for the new dependency
+    db: AsyncIOMotorDatabase = Depends(get_database), # We need to re-add this dependency
+    # CHANGE THIS DEPENDENCY:
+    team: Team = Depends(get_team_access_or_admin) # <-- NEW VIEW ACCESS CHECK
+):
+    """
+    (Admin or Member of Team Only) Get details for a single team.
+    """
+    # ... (rest of the function remains the same, as the dependency returns the team object)
+    team_data = team.model_dump(by_alias=True)
+    return TeamOut(id=str(team_data["_id"]), **team_data)
 
 @router.post("", response_model=TeamOut, status_code=status.HTTP_201_CREATED)
 async def create_team(
