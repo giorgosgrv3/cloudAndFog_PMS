@@ -1,4 +1,5 @@
 services:
+  # --- Database for User Service ---
   mysql:
     image: mysql:8
     container_name: mysql
@@ -16,17 +17,46 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # --- Database for Team & Task Services (NEW!) ---
+  mongo_db:
+    image: mongo:7
+    container_name: mongo_db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpw
+    ports: ["27017:27017"]
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  # --- User Service (MODIFIED) ---
   user_service:
     build: ./user_service
     container_name: user_service
-    environment:
-      DB_URI: "mysql+pymysql://root:rootpw@mysql:3306/users_db"
+    env_file: # <-- MODIFIED! Reads from the root .env
+      - ./.env
     depends_on:
       mysql:
         condition: service_healthy
     ports: ["8001:8001"]
     volumes:
-      - ./user_service:/app   # maps your flat files to /app
+      - ./user_service:/app
+    restart: unless-stopped
+
+  # --- Team Service (NEW!) ---
+  team_service:
+    build: ./team_service
+    container_name: team_service
+    env_file: # <-- Reads from the SAME root .env
+      - ./.env
+    depends_on:
+      mongo_db:
+        condition: service_started # Simple check for Mongo
+    ports: ["8002:8002"] # <-- New port for the new service
+    volumes:
+      - ./team_service:/app
+    restart: unless-stopped
 
 volumes:
   mysql_data:
+  mongo_data: # <-- NEW!

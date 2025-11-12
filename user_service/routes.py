@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm 
 from sqlalchemy.orm import Session
 from schemas import UserCreate, UserOut, Token, UserRoleUpdate # <-- Πρόσθεσε το UserRoleUpdate
+import httpx
 
 # ΑΛΛΑΓΗ: Πρόσθεσε τα get_current_user & get_current_admin_user
 from security import (
@@ -16,8 +17,13 @@ from db import get_db
 
 router = APIRouter(prefix="/users") # Αφαίρεσε το tags=["users"]
 
-# --- AUTH ENDPOINT ---
-# (Μένει ίδιο)
+# ------------- AUTH ENDPOINT --------------
+
+# we send username and passwd to endpoint POST users/token.
+# server finds the user in the DB, verifies passwd, checks if active==True.
+# if active, the server creates the data for the token, and asks for token creation, calling create_access_token()
+# create_access_token() returns the token, and server gives it back to us.
+# we now hold the token, and it's our responsibility as clients to show the token where we have to for authorization.
 @router.post("/token", response_model=Token, tags=["auth"])
 def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(), 
@@ -73,13 +79,25 @@ def update_user_role(
     admin_user: User = Depends(get_current_admin_user)
 ):
     """
-    (Admin Only) Αλλάζει τον ρόλο ενός χρήστη.
+    (Admin Only) Changes a user's role.
+    This endpoint is used for system synchronization (Team Leader/Member)
+    and manual promotion to Admin.
     """
-    print(f"Admin user '{admin_user.username}' is changing role for '{username}'")
+    
     user_to_update = db.query(User).filter(User.username == username).first()
     
     if not user_to_update:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    # --- THE CORRECTED CHECK ---
+    # Prevents demotion of an Admin (e.g., from 'admin' to 'member'),
+    # but allows all other system synchronization calls to pass.
+    if user_to_update.role == Role.ADMIN and payload.role != Role.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot demote an Admin account via the API."
+        )
+    # --- END OF CORRECTED CHECK ---
         
     user_to_update.role = payload.role
     db.commit()
@@ -116,11 +134,42 @@ def delete_user(
     admin_user: User = Depends(get_current_admin_user)
 ):
     """
-    (Admin Only) Διαγράφει μόνιμα έναν χρήστη.
-    *** ΠΡΟΣΟΧΗ: Αυτή η ενέργεια δεν αναιρείται! ***
+    (Admin Only) Deletes a user, *after* checking they are not a leader.
     """
-    print(f"Admin user '{admin_user.username}' is DELETING '{username}'")
+    print(f"Admin user '{admin_user.username}' is attempting to DELETE '{username}'")
     
+    is_leader = False # Default to False
+    
+    # --- 1. SAFETY CHECK (Try block is ONLY for the network call) ---
+    try:
+        url = f"http://team_service:8002/teams/internal/is-leader/{username}"
+        with httpx.Client() as client:
+            response = client.get(url)
+        
+        response.raise_for_status() 
+        data = response.json()
+        is_leader = data.get("is_leader", False) # Store the result
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Team service is unreachable. Cannot verify leader status."
+        )
+    except Exception as e:
+        print(f"Error during leadership check: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while verifying team leadership."
+        )
+    
+    # --- 2. BUSINESS LOGIC (Moved OUTSIDE the try block) ---
+    if is_leader:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete user: This user is a Team Leader. Please reassign their teams first."
+        )
+    
+    # --- 3. DELETE LOGIC (Now safe to run) ---
     user_to_delete = db.query(User).filter(User.username == username).first()
     
     if not user_to_delete:
@@ -132,8 +181,6 @@ def delete_user(
     db.delete(user_to_delete)
     db.commit()
     
-    # Ένα DELETE request συνήθως επιστρέφει 204 No Content,
-    # που σημαίνει "Πέτυχε, δεν έχω τίποτα να σου δείξω"
     return None
 
 # --- USER ENDPOINTS (Ενημερωμένα/Κλειδωμένα) ---
@@ -142,9 +189,9 @@ def delete_user(
 def create_user(payload: UserCreate, db: Session = Depends(get_db)):
     # (Αυτό μένει ίδιο - η δημιουργία χρήστη είναι ανοιχτή)
     if db.query(User).filter(User.username == payload.username).first():
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(status_code=400, detail="Username already exists. Please log in.")
     if db.query(User).filter(User.email == payload.email).first():
-        raise HTTPException(status_code=400, detail="Email already exists")
+        raise HTTPException(status_code=400, detail="Email already exists. Please log in.")
 
     user = User(
         username=payload.username,

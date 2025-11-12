@@ -16,14 +16,19 @@ SECRET_KEY = os.getenv("SECRET_KEY", "default_secret_please_change")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-# --- Password Hashing ---
+# -------------- Password Hashing -----------------
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.verify(plain_password, hashed_password)
+    return bcrypt.verify(plain_password, hashed_password) #checks if the passwd provided in sign in matches the one in the DB
 
 def get_password_hash(password: str) -> str:
-    return bcrypt.hash(password)
+    return bcrypt.hash(password) #hash passwd provided by user, used in routes.py when user registers
 
-# --- JWT Token Creation ---
+# ----------------- JWT Token Creation ------------------
+
+# called by login_for_access_token
+# takes the data given to it, adds the expiration time (1hr), encrypts the data using jwt.encode()
+# sends it back to login_for_access_token
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     if expires_delta:
@@ -49,7 +54,7 @@ credentials_exception = HTTPException(
     headers={"WWW-Authenticate": "Bearer"},
 )
 
-async def get_current_user(
+def get_current_user(
     token: str = Depends(oauth2_scheme), 
     db: Session = Depends(get_db)
 ) -> User:
@@ -89,7 +94,7 @@ async def get_current_user(
     return user
 
 
-async def get_current_admin_user(
+def get_current_admin_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
     """
