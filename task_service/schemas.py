@@ -83,3 +83,22 @@ class TaskStatusUpdate(BaseModel):
     Schema for updating ONLY the task status.
     """
     status: TaskStatus
+
+class CommentIn(BaseModel):
+    """
+    Schema for adding a new comment (API Input).
+    """
+    text: str = Field(..., min_length=2, max_length=1000)
+
+class CommentOut(BaseModel):
+    """
+    Schema for viewing a comment (API Output).
+    Note: The ID here is the nested object's ID (PyObjectId).
+    """
+    id: str
+    text: str
+    created_by: str
+    created_at: datetime
+    
+    # Allows conversion from the MongoDB nested model
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})

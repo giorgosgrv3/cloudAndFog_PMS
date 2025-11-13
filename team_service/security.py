@@ -180,3 +180,4 @@ async def get_team_access_or_admin(
     
     # 3. FINAL BLOCKING: If they are not Admin and not a member, block with the same ambiguous error.
     raise ambiguous_error
+    

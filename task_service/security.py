@@ -139,6 +139,7 @@ async def get_team_access_for_tasks(
 
 # This is used for deletion. It checks if the user is the team leader of the team, to which
 # the task belongs, and returns the task object. it is then deleted by the endpoint.
+
 async def get_task_leader_only(
     task_id: str, # Get the ID from the path
     current_user: Annotated[TokenData, Depends(get_current_user)],
@@ -176,3 +177,66 @@ async def get_task_leader_only(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Only the Admin or the Task Creator/Team Leader can delete this task."
     )
+
+async def authorize_comment_deletion(
+    task_id: str,
+    comment_id: str,
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    current_user: Annotated[TokenData, Depends(get_current_user)]
+) -> PyObjectId: # Returns the validated task ObjectId
+    """
+    Authorization check for comment deletion:
+    Allowed if the user is the comment creator, the Team Leader of the task's team, or an Admin.
+    """
+    
+    # 1. Validate IDs
+    try:
+        task_obj_id = PyObjectId(task_id)
+        comment_obj_id = PyObjectId(comment_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task or comment ID format.")
+
+    # 2. Find the Task and Comment
+    task_doc = await db["tasks"].find_one(
+        {"_id": task_obj_id}, 
+        projection={"team_id": 1, "comments": 1}
+    )
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    
+    comments = task_doc.get("comments", [])
+    
+    # Find the specific comment within the list
+    target_comment = next((c for c in comments if c["_id"] == comment_obj_id), None)
+    if not target_comment:
+        raise HTTPException(status_code=404, detail="Comment not found.")
+
+    # 3. Check Authorization Roles
+    user_is_creator = current_user.username == target_comment.get("created_by")
+    user_is_admin = current_user.role == Role.ADMIN
+    user_is_leader = False
+    
+    # Check if the user is the Team Leader (Requires ISC call to Team Service)
+    team_id = task_doc["team_id"]
+    if current_user.role == Role.TEAM_LEADER:
+        try:
+            team_service_url = f"http://team_service:8002/teams/{team_id}/internal/is-leader/{current_user.username}"
+            async with httpx.AsyncClient() as client:
+                headers = {"Authorization": f"Bearer {current_user.token}"}
+                response = await client.get(team_service_url, headers=headers)
+            
+            # Team Service returns 200 if the user is the leader of that team, 404/403 otherwise
+            if response.status_code == 200 and response.json().get("is_leader"):
+                user_is_leader = True
+        except Exception:
+            # Service error, assume not authorized for safety
+            pass 
+
+    # 4. Final Permission Check
+    if not (user_is_creator or user_is_leader or user_is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be the comment creator, the Team Leader, or an Admin to delete this comment."
+        )
+
+    return task_obj_id # Return the validated Task ID for deletion

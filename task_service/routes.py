@@ -3,9 +3,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Annotated, List, Optional # ADD THIS
 
 from db import get_database
-from schemas import TaskCreate, TaskOut, TokenData, TaskStatus, TaskUpdate, TaskStatusUpdate, Role
+from schemas import TaskCreate, TaskOut, TokenData, TaskStatus, TaskUpdate, TaskStatusUpdate, Role, CommentIn, CommentOut
 from models import Task, PyObjectId
-from security import get_current_user, get_validated_team_leader, get_team_access_for_tasks, get_task_leader_only # Import the new dependency
+from security import get_current_user, get_validated_team_leader, get_team_access_for_tasks, get_task_leader_only, authorize_comment_deletion # Import the new dependency
 import httpx
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -252,4 +252,124 @@ async def delete_task(
     # Use the ID from the validated Task object
     await db["tasks"].delete_one({"_id": task_to_delete.id})
     
+    return None
+
+@router.post("/{task_id}/comments", response_model=CommentOut, status_code=status.HTTP_201_CREATED, tags=["comments"])
+async def add_comment_to_task(
+    task_id: str,
+    comment_data: CommentIn,
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    current_user: Annotated[TokenData, Depends(get_current_user)]
+):
+    """
+    (Team Member/Leader/Admin) Adds a new comment to a specific task.
+    Requires user to be a member of the task's team.
+    """
+    # 1. Validate Task ID format
+    try:
+        obj_id = PyObjectId(task_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task ID format.")
+
+    # 2. Find the task and get the team_id
+    task_doc = await db["tasks"].find_one({"_id": obj_id}, projection={"team_id": 1})
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    
+    team_id = task_doc["team_id"]
+    
+    # 3. Security Check: Check if user has access to the team
+    # We call the dependency's logic directly to reuse the powerful ISC check
+    await get_team_access_for_tasks(team_id, current_user)
+
+    # 4. Create the new Comment object (using model_dump for clean nested insertion)
+    new_comment = Comment(
+        text=comment_data.text,
+        created_by=current_user.username,
+    )
+    
+    # 5. Insert the comment into the nested 'comments' array in MongoDB
+    result = await db["tasks"].update_one(
+        {"_id": obj_id},
+        {"$push": {"comments": new_comment.model_dump(by_alias=True)}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to add comment.")
+        
+    # Return the newly created comment object (with the generated ID and timestamp)
+    # Since MongoDB generated the ID, we return the object we created locally.
+    return CommentOut(
+        id=str(new_comment.id),
+        text=new_comment.text,
+        created_by=new_comment.created_by,
+        created_at=new_comment.created_at
+    )
+
+
+@router.get("/{task_id}/comments", response_model=List[CommentOut], tags=["comments"])
+async def get_all_task_comments(
+    task_id: str,
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    current_user: Annotated[TokenData, Depends(get_current_user)]
+):
+    """
+    (Team Member/Leader/Admin) Retrieves all comments for a specific task.
+    Requires user to be a member of the task's team.
+    """
+    # 1. Validate Task ID format
+    try:
+        obj_id = PyObjectId(task_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task ID format.")
+
+    # 2. Find the task and get the team_id
+    task_doc = await db["tasks"].find_one({"_id": obj_id}, projection={"team_id": 1})
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    
+    team_id = task_doc["team_id"]
+    
+    # 3. Security Check: Check if user has access to the team
+    await get_team_access_for_tasks(team_id, current_user)
+    
+    # 4. Retrieve the full task document, but only include the comments array
+    task_with_comments = await db["tasks"].find_one(
+        {"_id": obj_id}, 
+        projection={"comments": 1}
+    )
+    
+    if not task_with_comments or 'comments' not in task_with_comments:
+        return []
+        
+    # 5. Convert MongoDB documents to Pydantic CommentOut objects
+    comments_list = task_with_comments['comments']
+    
+    return [CommentOut(id=str(comment["_id"]), **comment) for comment in comments_list]
+
+@router.delete("/{task_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["comments"])
+async def delete_comment(
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    task_id: Annotated[PyObjectId, Depends(authorize_comment_deletion)], # Task ID returned by the dependency
+    comment_id: str # Required by the path, but the ID is validated in the dependency
+):
+    """
+    (Comment Creator, Team Leader, or Admin Only) Deletes a specific comment.
+    """
+    
+    # The dependency ensures the user is authorized and returns the validated task_id
+    comment_obj_id = PyObjectId(comment_id)
+    
+    # Use MongoDB's $pull operator to remove the nested document from the comments array
+    result = await db["tasks"].update_one(
+        {"_id": task_id}, 
+        {"$pull": {"comments": {"_id": comment_obj_id}}}
+    )
+    
+    if result.modified_count == 0:
+        # If modified_count is 0, it means the comment wasn't removed. 
+        # Since the task/comment were found and user was authorized (by the dependency),
+        # this case is unlikely but handles a race condition or a server error.
+        raise HTTPException(status_code=500, detail="Failed to delete comment or comment was already gone.")
+        
     return None
