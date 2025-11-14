@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv() # Load environment variables first
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import router as tasks_router
@@ -14,6 +16,11 @@ app.add_middleware(
 )
 
 app.include_router(tasks_router)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 @app.get("/health")
 def health():

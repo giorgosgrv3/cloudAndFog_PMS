@@ -1,17 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Annotated, List, Optional # ADD THIS
+import os
+from pathlib import Path
 
 from db import get_database
-from schemas import TaskCreate, TaskOut, TokenData, TaskStatus, TaskUpdate, TaskStatusUpdate, Role, CommentIn, CommentOut
-from models import Task, PyObjectId
-from security import get_current_user, get_validated_team_leader, get_team_access_for_tasks, get_task_leader_only, authorize_comment_deletion # Import the new dependency
+from schemas import (TaskCreate, TaskOut, TokenData, TaskStatus, TaskUpdate,
+                    TaskStatusUpdate, Role, CommentIn, CommentOut, AttachmentOut)
+from models import Task, PyObjectId, Comment, Attachment
+from security import (get_current_user, get_validated_team_leader, get_team_access_for_tasks,
+                    get_task_leader_only, authorize_comment_deletion) # Import the new dependency
 import httpx
+import logging
+logger = logging.getLogger("task_service")
 
-router = APIRouter(prefix="/tasks", tags=["tasks"])
 
+router = APIRouter(prefix="/tasks")
 
-@router.post("", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
+UPLOAD_BASE_DIR = Path("task_files")
+UPLOAD_BASE_DIR.mkdir(exist_ok=True)
+
+@router.post("", response_model=TaskOut, status_code=status.HTTP_201_CREATED, tags=["tasks"])
 async def create_task(
     task_data: TaskCreate, 
     db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
@@ -60,7 +71,14 @@ async def create_task(
     # --- 3. Save to MongoDB ---
     result = await db["tasks"].insert_one(new_task.model_dump(by_alias=True))
     created_task = await db["tasks"].find_one({"_id": result.inserted_id})
-    
+
+    logger.info("Task created : task_id=%s, team_id=%s, created_by=%s, assigned_to=%s",
+    str(result.inserted_id),
+    validated_team_id,
+    current_user.username,
+    task_data.assigned_to,
+    )
+
     return TaskOut(
         id=str(created_task["_id"]),
         **created_task
@@ -373,3 +391,170 @@ async def delete_comment(
         raise HTTPException(status_code=500, detail="Failed to delete comment or comment was already gone.")
         
     return None
+
+@router.post("/{task_id}/attachments", response_model=AttachmentOut, status_code=status.HTTP_201_CREATED, tags=["attachments"])
+async def upload_task_attachment(
+    task_id: str,
+    file: UploadFile = File(...),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    (Team Member/Leader/Admin)
+    Upload a file attachment for a specific task.
+    Access is allowed only if the user belongs to the task's team
+    (or is an Admin), same as comments logic.
+    """
+    # 1. Validate task ID
+    try:
+        obj_id = PyObjectId(task_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task ID format.")
+
+    # 2. Find task and get its team_id
+    task_doc = await db["tasks"].find_one({"_id": obj_id}, projection={"team_id": 1})
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    team_id = task_doc["team_id"]
+
+    # 3. Reuse team access check (Admin or Member of that team)
+    await get_team_access_for_tasks(team_id, current_user)
+
+    # 4. Prepare filesystem path
+    task_dir = UPLOAD_BASE_DIR / str(task_id)
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    # We'll create a new ObjectId for the attachment and use it in the filename
+    attachment_id = PyObjectId()
+    safe_filename = file.filename or "attachment"
+    # Path on disk: task_files/<task_id>/<attachment_id>_<original_name>
+    stored_path = task_dir / f"{attachment_id}_{safe_filename}"
+
+    # 5. Save file to disk
+    file_bytes = await file.read()
+    try:
+        with open(stored_path, "wb") as f:
+            f.write(file_bytes)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to save file on server.")
+
+    # 6. Build Attachment model and push to MongoDB
+    attachment = Attachment(
+        id=attachment_id,
+        filename=safe_filename,
+        content_type=file.content_type or "application/octet-stream",
+        path=str(stored_path),
+        uploaded_by=current_user.username,
+    )
+
+    result = await db["tasks"].update_one(
+        {"_id": obj_id},
+        {"$push": {"attachments": attachment.model_dump(by_alias=True)}},
+    )
+
+    if result.modified_count == 0:
+        # Roll back file if DB update failed
+        try:
+            os.remove(stored_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to attach file to task.")
+
+    return AttachmentOut(
+        id=str(attachment.id),
+        filename=attachment.filename,
+        content_type=attachment.content_type,
+        uploaded_by=attachment.uploaded_by,
+        uploaded_at=attachment.uploaded_at,
+    )
+
+@router.get("/{task_id}/attachments", response_model=List[AttachmentOut], tags=["attachments"])
+async def list_task_attachments(
+    task_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    (Team Member/Leader/Admin)
+    List all attachments metadata for a task.
+    """
+    try:
+        obj_id = PyObjectId(task_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task ID format.")
+
+    # Get team_id and attachments in one shot
+    task_doc = await db["tasks"].find_one(
+        {"_id": obj_id},
+        projection={"team_id": 1, "attachments": 1},
+    )
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    team_id = task_doc["team_id"]
+    await get_team_access_for_tasks(team_id, current_user)
+
+    attachments = task_doc.get("attachments", [])
+    return [
+        AttachmentOut(
+            id=str(att["_id"]),
+            filename=att["filename"],
+            content_type=att["content_type"],
+            uploaded_by=att["uploaded_by"],
+            uploaded_at=att["uploaded_at"],
+        )
+        for att in attachments
+    ]
+
+@router.get("/{task_id}/attachments/{attachment_id}", response_class=FileResponse, tags=["attachments"])
+async def download_task_attachment(
+    task_id: str,
+    attachment_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    (Team Member/Leader/Admin)
+    Download a specific attachment file from a task.
+    """
+    # Validate IDs
+    try:
+        task_obj_id = PyObjectId(task_id)
+        attachment_obj_id = PyObjectId(attachment_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task or attachment ID format.")
+
+    # Fetch task with team and attachments
+    task_doc = await db["tasks"].find_one(
+        {"_id": task_obj_id},
+        projection={"team_id": 1, "attachments": 1},
+    )
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    team_id = task_doc["team_id"]
+    await get_team_access_for_tasks(team_id, current_user)
+
+    attachments = task_doc.get("attachments", [])
+    attachment = next((a for a in attachments if a["_id"] == attachment_obj_id), None)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+
+    file_path = attachment["path"]
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=410, detail="Attachment file no longer exists on server.")
+    
+    resolved = Path(file_path).resolve()
+    base = UPLOAD_BASE_DIR.resolve()
+
+    if base not in resolved.parents and resolved != base:
+    # The stored path points outside our uploads directory → suspicious
+        raise HTTPException(status_code=500, detail="Invalid attachment path on server.")
+
+    # FileResponse will handle streaming and content-type
+    return FileResponse(
+        path=file_path,
+        media_type=attachment.get("content_type", "application/octet-stream"),
+        filename=attachment.get("filename", "download"),
+    )

@@ -18,3 +18,6 @@ email-validator==2.2.0
 
 # Inter-Service Communication
 httpx==0.27.0
+
+# NEW: needed for UploadFile / Form
+python-multipart==0.0.9

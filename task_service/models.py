@@ -25,6 +25,14 @@ class Comment(BaseModel):
     created_by: str = Field(...) # Username
     created_at: datetime = Field(default_factory=datetime.now)
 
+class Attachment(BaseModel):
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    filename: str = Field(...)        # Original filename
+    content_type: str = Field(...)    # MIME type
+    path: str = Field(...)            # Server-side path on disk
+    uploaded_by: str = Field(...)     # Username of uploader
+    uploaded_at: datetime = Field(default_factory=datetime.now)
+
 # --- Task Entity ---
 class Task(BaseModel):
     """
@@ -42,6 +50,8 @@ class Task(BaseModel):
     due_date: datetime = Field(...)
     created_at: datetime = Field(default_factory=datetime.now)
     comments: List[Comment] = Field(default_factory=list)
+    # NEW:
+    attachments: List[Attachment] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True

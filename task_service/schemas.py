@@ -64,6 +64,7 @@ class TaskOut(BaseModel):
     due_date: datetime
     created_at: datetime
     # Comments are excluded in the list view for simplicity
+    # So are the attachments.
 
 # This is for TEAM LEADER or ADMIN, allows to change anything in the task
 class TaskUpdate(BaseModel):
@@ -101,4 +102,17 @@ class CommentOut(BaseModel):
     created_at: datetime
     
     # Allows conversion from the MongoDB nested model
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
+
+class AttachmentOut(BaseModel):
+    """
+    Schema for viewing an attachment (metadata only). The internal path is not exposed to clients,
+    they just use the download endpoint.
+    """
+    id: str
+    filename: str
+    content_type: str
+    uploaded_by: str
+    uploaded_at: datetime
+
     model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})

@@ -9,9 +9,9 @@ from security import get_current_user, get_current_admin_user, get_team_leader_o
 from bson import ObjectId # For querying by ID
 import httpx
 
-router = APIRouter(prefix="/teams", tags=["teams"])
+router = APIRouter(prefix="/teams")
 
-@router.get("/{team_id}", response_model=TeamOut)
+@router.get("/{team_id}", response_model=TeamOut, tags=["teams CRUD"])
 async def get_team_details(
     team_id: str, # We need this for the new dependency
     db: AsyncIOMotorDatabase = Depends(get_database), # We need to re-add this dependency
@@ -25,7 +25,7 @@ async def get_team_details(
     team_data = team.model_dump(by_alias=True)
     return TeamOut(id=str(team_data["_id"]), **team_data)
 
-@router.post("", response_model=TeamOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TeamOut, status_code=status.HTTP_201_CREATED, tags=["teams CRUD"])
 async def create_team(
     team_data: TeamCreate,
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -90,7 +90,7 @@ async def create_team(
     return TeamOut(id=str(created_team["_id"]), **created_team)
 
 
-@router.get("", response_model=List[TeamOut])
+@router.get("", response_model=List[TeamOut], tags=["list teams"])
 async def list_teams(
     db: AsyncIOMotorDatabase = Depends(get_database),
     current_user: TokenData = Depends(get_current_user)
@@ -124,7 +124,7 @@ async def _is_user_still_leader(db: AsyncIOMotorDatabase, username: str) -> bool
     count = await db["teams"].count_documents({"leader_id": username})
     return count > 0
 
-@router.get("/leader/{username}", response_model=List[TeamOut])
+@router.get("/leader/{username}", response_model=List[TeamOut], tags=["list teams"])
 async def list_teams_led_by_user(
     username: str,
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -162,7 +162,7 @@ async def is_user_a_team_leader(
     is_leader = await _is_user_still_leader(db, username)
     return {"is_leader": is_leader}
 
-@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["teams CRUD"])
 async def delete_team(
     team_id: str,
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -213,7 +213,7 @@ async def delete_team(
 # We're breaking the endpoints in two parts.
 # THIS endpoint only allows us to change team name and details (admin & leader only).
 
-@router.patch("/{team_id}", response_model=TeamOut)
+@router.patch("/{team_id}", response_model=TeamOut, tags=["teams CRUD"])
 async def update_team_details(
     team_data: TeamUpdate, # The JSON payload
     team: Team = Depends(get_team_leader_or_admin), # Our security check
@@ -241,7 +241,7 @@ async def update_team_details(
     return TeamOut(id=str(updated_team_doc["_id"]), **updated_team_doc)
 
 # THIS endpoint only allows us to add members to the team as leader or admin.
-@router.post("/{team_id}/members", response_model=TeamOut)
+@router.post("/{team_id}/members", response_model=TeamOut, tags=["team members"])
 async def add_member_to_team(
     payload: MemberAdd, # The JSON body: {"username": "new_user"}
     team: Team = Depends(get_team_leader_only), # 1. Security: Checks if user is Admin/Leader
@@ -300,7 +300,7 @@ async def add_member_to_team(
 
 
 #This allows us to remove a member from a team, as admins or leaders
-@router.delete("/{team_id}/members/{username_to_remove}", response_model=TeamOut)
+@router.delete("/{team_id}/members/{username_to_remove}", response_model=TeamOut, tags=["team members"])
 async def remove_member_from_team(
     username_to_remove: str, # The member to remove (from the URL)
     team: Team = Depends(get_team_leader_only), # 1. Security: Checks if user is Admin/Leader
@@ -339,7 +339,7 @@ async def remove_member_from_team(
 
 
 
-@router.patch("/{team_id}/assign-leader", response_model=TeamOut)
+@router.patch("/{team_id}/assign-leader", response_model=TeamOut, tags=["team members"])
 async def assign_team_leader(
     team_id: str, # <-- 1. We get the team_id from the path
     payload: LeaderAssign, 
