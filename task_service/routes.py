@@ -84,6 +84,35 @@ async def create_task(
         **created_task
     )
 
+@router.get("/{task_id}", response_model=TaskOut, tags=["tasks"])
+async def get_task_details(
+    task_id: str,
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    current_user: Annotated[TokenData, Depends(get_current_user)]
+):
+    """
+    (Member/Leader/Admin) Retrieves details of a single task.
+    Requires user to be a member of the task's team (or Admin).
+    """
+    # 1. Validate Task ID format
+    try:
+        obj_id = PyObjectId(task_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task ID format.")
+
+    # 2. Find the task
+    task_doc = await db["tasks"].find_one({"_id": obj_id})
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    
+    # 3. Security Check: Check if user has access to the team
+    # We extract the team_id from the task and verify access
+    team_id = task_doc["team_id"]
+    await get_team_access_for_tasks(team_id, current_user)
+
+    # 4. Return the task
+    return TaskOut(id=str(task_doc["_id"]), **task_doc)
+
 #--------- UPDATE TASK (team leader only) --------
 
 @router.patch("/{task_id}", response_model=TaskOut, tags=["tasks"])
@@ -558,3 +587,88 @@ async def download_task_attachment(
         media_type=attachment.get("content_type", "application/octet-stream"),
         filename=attachment.get("filename", "download"),
     )
+
+@router.delete("/{task_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["attachments"])
+async def delete_task_attachment(
+    task_id: str,
+    attachment_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    (Uploader, Team Leader, or Admin Only)
+    Deletes a specific attachment from a task and removes the file from disk.
+    """
+    # 1. Validate IDs
+    try:
+        task_obj_id = PyObjectId(task_id)
+        attachment_obj_id = PyObjectId(attachment_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid task or attachment ID format.")
+
+    # 2. Find the task
+    task_doc = await db["tasks"].find_one(
+        {"_id": task_obj_id},
+        projection={"team_id": 1, "attachments": 1}
+    )
+    if not task_doc:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    # 3. Find the attachment
+    attachments = task_doc.get("attachments", [])
+    target_attachment = next((a for a in attachments if a["_id"] == attachment_obj_id), None)
+    
+    if not target_attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+
+    # 4. Security Check (Authorization)
+    # Rules: 
+    # - Admin: Can delete anything
+    # - Team Leader: Can delete anything in their team (Check via Team Service or role)
+    # - Member: Can ONLY delete their own uploads
+    
+    is_uploader = target_attachment["uploaded_by"] == current_user.username
+    is_admin = current_user.role == Role.ADMIN
+    
+    # Check if Leader (we need the team_id)
+    is_leader = False
+    if current_user.role == Role.TEAM_LEADER:
+        # Verify with Team Service if they lead this specific team
+        team_id = task_doc["team_id"]
+        try:
+            # Internal call to verify leadership
+            team_service_url = f"http://team_service:8002/teams/{team_id}"
+            async with httpx.AsyncClient() as client:
+                headers = {"Authorization": f"Bearer {current_user.token}"}
+                response = await client.get(team_service_url, headers=headers)
+                # If they can edit the team (PATCH), they are the leader (or admin)
+                # But simpler: just check if the response says they are the leader
+                if response.status_code == 200:
+                    team_data = response.json()
+                    if team_data.get("leader_id") == current_user.username:
+                        is_leader = True
+        except Exception:
+            pass # If check fails, fallback to other permissions
+
+    if not (is_uploader or is_leader or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You are not authorized to delete this file."
+        )
+
+    # 5. Delete file from disk
+    file_path = Path(target_attachment["path"])
+    try:
+        if file_path.exists():
+            os.remove(file_path)
+    except Exception as e:
+        logger.error(f"Failed to delete file from disk: {e}")
+        # We proceed to delete from DB anyway to keep data consistent
+
+    # 6. Remove from MongoDB
+    await db["tasks"].update_one(
+        {"_id": task_obj_id},
+        {"$pull": {"attachments": {"_id": attachment_obj_id}}}
+    )
+
+    return None

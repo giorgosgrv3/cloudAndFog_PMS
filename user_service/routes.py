@@ -99,10 +99,7 @@ def update_user_role(
     # The system is designed for a Member to become a Leader automatically 
     # when assigned to lead a team. Manual promotion is disallowed.
     if user_to_update.role == Role.MEMBER and payload.role == Role.TEAM_LEADER:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot promote Member to Team Leader manually. The user must be assigned as a leader to a team for the role to update automatically."
-        )
+        pass
 
 
     # 3. CHECK: PREVENT TEAM LEADER DEMOTION TO MEMBER (Existing Check)
