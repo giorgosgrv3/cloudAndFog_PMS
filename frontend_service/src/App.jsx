@@ -8,6 +8,10 @@ import UserProfilePage from './pages/UserProfilePage'; // <--- 1. NEW IMPORT
 import AdminTeamDetailsPage from './pages/AdminTeamDetailsPage'; // <--- Import
 import AdminTaskDetailsPage from './pages/AdminTaskDetailsPage'; // <--- 1. IMPORT
 import DashboardPage from './pages/DashboardPage'; // <--- IMPORT
+import UserTeamsPage from './pages/UserTeamsPage'; // <--- IMPORT
+import UserTeamDetailsPage from './pages/UserTeamDetailsPage';
+import UserTaskDetailsPage from './pages/UserTaskDetailsPage'; // <--- IMPORT
+import UserMyTasksPage from './pages/UserMyTasksPage'; // <--- Import
 import Layout from './components/Layout';
 import { useAuth } from './context/AuthContext';
 
@@ -24,7 +28,12 @@ function App() {
         
         {/* 2. NEW ROUTE - Available to ALL logged in users */}
         <Route path="/profile" element={<UserProfilePage />} />
+        <Route path="/teams" element={<UserTeamsPage />} />
+        <Route path="/teams/:teamId" element={<UserTeamDetailsPage />} /> {/* <--- ΝΕΟ ROUTE */}
+        <Route path="/teams/:teamId/tasks/:taskId" element={<UserTaskDetailsPage />} /> {/* <--- ΝΕΟ ROUTE */}
+        <Route path="/my-tasks" element={<UserMyTasksPage />} />
 
+        
         {isAdmin && (
   <>
     <Route path="/admin/users" element={<AdminUsersPage />} />

@@ -22,6 +22,87 @@ router = APIRouter(prefix="/tasks")
 UPLOAD_BASE_DIR = Path("task_files")
 UPLOAD_BASE_DIR.mkdir(exist_ok=True)
 
+# --------------- FILTER FUNCTIONS -------------
+
+# User can view all the tasks assigned to them, from all teams
+@router.get("/me", response_model=List[TaskOut], tags=["tasks"])
+async def list_my_assigned_tasks(
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    # --- NEW QUERY PARAMETERS ---
+    status: Optional[TaskStatus] = None, # Filters by status (TODO, IN_PROGRESS, DONE)
+    sort_by_due: Optional[bool] = False, # If True, sorts by due_date
+    # ---------------------------
+):
+    query = {"assigned_to": current_user.username}
+    
+    # 1. Status Filtering
+    if status:
+        query["status"] = status.value # Use .value to get the string from the Enum
+        
+    # 2. Sorting Logic
+    sort_criteria = []
+    if sort_by_due:
+        # Sort by due_date ascending (1)
+        sort_criteria.append(("due_date", 1))
+
+    # --- THE FIX ---
+    tasks_cursor = db["tasks"].find(query)
+    
+    if sort_criteria: # <-- ONLY apply sort if criteria exist
+        tasks_cursor = tasks_cursor.sort(sort_criteria)
+    # --- END FIX ---
+
+    tasks = await tasks_cursor.to_list(length=100)
+    
+    if not tasks:
+        return []
+
+    return [TaskOut(id=str(task["_id"]), **task) for task in tasks]
+
+# User can see all the tasks of their team
+@router.get("/team/{team_id}", response_model=List[TaskOut], tags=["tasks"])
+async def list_tasks_by_team(
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
+    # This dependency runs the security check and returns the validated ID.
+    # It ensures the user is a member or admin of the team.
+    validated_team_id: Annotated[str, Depends(get_team_access_for_tasks)], 
+    
+    # Query Parameters for filtering and sorting
+    status: Optional[TaskStatus] = None, 
+    sort_by_due: Optional[bool] = False,
+):
+    """
+    (Team Members/Admins Only) Lists all tasks for a specific team, with optional filtering.
+    """
+    
+    # 1. Build the MongoDB Query
+    query = {"team_id": validated_team_id}
+    
+    if status:
+        query["status"] = status.value
+        
+    # 1. Build the MongoDB Sort Criteria
+    sort_criteria = []
+    if sort_by_due:
+        sort_criteria.append(("due_date", 1))
+
+    # 2. Execute the Query
+    tasks_cursor = db["tasks"].find(query)
+    
+    # --- FIX: Only apply sort if criteria exist ---
+    if sort_criteria: 
+        tasks_cursor = tasks_cursor.sort(sort_criteria)
+    # --- END FIX ---
+
+    tasks = await tasks_cursor.to_list(length=100)
+    
+    if not tasks:
+        return []
+
+    return [TaskOut(id=str(task["_id"]), **task) for task in tasks]
+
+
 @router.post("", response_model=TaskOut, status_code=status.HTTP_201_CREATED, tags=["tasks"])
 async def create_task(
     task_data: TaskCreate, 
@@ -207,85 +288,6 @@ async def update_task_status(
     updated_task_doc = await db["tasks"].find_one({"_id": task.id})
     return TaskOut(id=str(updated_task_doc["_id"]), **updated_task_doc)
 
-# --------------- FILTER FUNCTIONS -------------
-
-# User can view all the tasks assigned to them, from all teams
-@router.get("/me", response_model=List[TaskOut], tags=["tasks"])
-async def list_my_assigned_tasks(
-    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
-    current_user: Annotated[TokenData, Depends(get_current_user)],
-    # --- NEW QUERY PARAMETERS ---
-    status: Optional[TaskStatus] = None, # Filters by status (TODO, IN_PROGRESS, DONE)
-    sort_by_due: Optional[bool] = False, # If True, sorts by due_date
-    # ---------------------------
-):
-    query = {"assigned_to": current_user.username}
-    
-    # 1. Status Filtering
-    if status:
-        query["status"] = status.value # Use .value to get the string from the Enum
-        
-    # 2. Sorting Logic
-    sort_criteria = []
-    if sort_by_due:
-        # Sort by due_date ascending (1)
-        sort_criteria.append(("due_date", 1))
-
-    # --- THE FIX ---
-    tasks_cursor = db["tasks"].find(query)
-    
-    if sort_criteria: # <-- ONLY apply sort if criteria exist
-        tasks_cursor = tasks_cursor.sort(sort_criteria)
-    # --- END FIX ---
-
-    tasks = await tasks_cursor.to_list(length=100)
-    
-    if not tasks:
-        return []
-
-    return [TaskOut(id=str(task["_id"]), **task) for task in tasks]
-
-# User can see all the tasks of their team
-@router.get("/team/{team_id}", response_model=List[TaskOut], tags=["tasks"])
-async def list_tasks_by_team(
-    db: Annotated[AsyncIOMotorDatabase, Depends(get_database)],
-    # This dependency runs the security check and returns the validated ID.
-    # It ensures the user is a member or admin of the team.
-    validated_team_id: Annotated[str, Depends(get_team_access_for_tasks)], 
-    
-    # Query Parameters for filtering and sorting
-    status: Optional[TaskStatus] = None, 
-    sort_by_due: Optional[bool] = False,
-):
-    """
-    (Team Members/Admins Only) Lists all tasks for a specific team, with optional filtering.
-    """
-    
-    # 1. Build the MongoDB Query
-    query = {"team_id": validated_team_id}
-    
-    if status:
-        query["status"] = status.value
-        
-    # 1. Build the MongoDB Sort Criteria
-    sort_criteria = []
-    if sort_by_due:
-        sort_criteria.append(("due_date", 1))
-
-    # 2. Execute the Query
-    tasks_cursor = db["tasks"].find(query)
-    
-    # --- FIX: Only apply sort if criteria exist ---
-    if sort_criteria: 
-        tasks_cursor = tasks_cursor.sort(sort_criteria)
-    # --- END FIX ---
-
-    tasks = await tasks_cursor.to_list(length=100)
-    
-    if not tasks:
-        return []
-
-    return [TaskOut(id=str(task["_id"]), **task) for task in tasks]
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["tasks"])
 async def delete_task(

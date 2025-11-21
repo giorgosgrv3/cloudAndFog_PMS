@@ -29,10 +29,9 @@ export const api = {
         update: (id, data) => teamClient.patch(`/teams/${id}`, data),
         delete: (id) => teamClient.delete(`/teams/${id}`),
         
-        addMember: (teamId, username) => teamClient.post(`/teams/${teamId}/members`, null, { params: { username } }),
+        addMember: (teamId, username) => teamClient.post(`/teams/${teamId}/members`, { username }),
         removeMember: (teamId, username) => teamClient.delete(`/teams/${teamId}/members/${username}`),
-        assignLeader: (teamId, username) => teamClient.patch(`/teams/${teamId}/assign-leader`, null, { params: { username } }),
-    },
+        assignLeader: (teamId, username) => teamClient.patch(`/teams/${teamId}/assign-leader`, { new_leader_username: username }),    },
     tasks: {
         getMyTasks: (filters = {}) => taskClient.get('/tasks/me', { params: filters }),
         getByTeam: (teamId, filters = {}) => taskClient.get(`/tasks/team/${teamId}`, { params: filters }),

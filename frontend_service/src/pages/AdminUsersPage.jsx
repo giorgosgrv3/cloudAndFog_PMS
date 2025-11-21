@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/endpoints';
-import { Search } from 'lucide-react';
+import { Search, CheckCircle, Loader } from 'lucide-react';
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // State για το "Activate All" loading
+  const [activatingAll, setActivatingAll] = useState(false);
 
   const getErrorMessage = (err) => {
     return err.response?.data?.detail || 'An unexpected error occurred.';
@@ -15,8 +18,6 @@ export default function AdminUsersPage() {
 
   const fetchUsers = async () => {
     try {
-      // Προσωρινά κρατάμε το loading μόνο στην αρχή για να μην "αναβοσβήνει" όλη η σελίδα
-      // όταν κάνουμε refresh μετά από cancel.
       const { data } = await api.users.getAll();
       setUsers(data);
     } catch (err) {
@@ -41,6 +42,36 @@ export default function AdminUsersPage() {
     }
   };
 
+  // ΝΕΟΣ HANDLER: ACTIVATE ALL
+  const handleActivateAll = async () => {
+    // Βρίσκουμε τους ανενεργούς
+    const inactiveUsers = users.filter(u => !u.active);
+    
+    if (inactiveUsers.length === 0) {
+        alert("All users are already active!");
+        return;
+    }
+
+    if (!window.confirm(`Are you sure you want to activate all ${inactiveUsers.length} pending users?`)) return;
+
+    setActivatingAll(true);
+    try {
+        // Στέλνουμε όλα τα requests ταυτόχρονα για ταχύτητα
+        await Promise.all(inactiveUsers.map(u => api.users.activate(u.username)));
+        
+        // Μόλις τελειώσουν όλα, ανανεώνουμε τη λίστα
+        await fetchUsers();
+        alert(`Successfully activated ${inactiveUsers.length} users.`);
+        
+    } catch (err) {
+        console.error(err);
+        alert("Some activations might have failed. Please check the list.");
+        fetchUsers(); // Ανανεώνουμε όπως και να 'χει
+    } finally {
+        setActivatingAll(false);
+    }
+  };
+
   const handleDeactivate = async (username) => {
     if (!window.confirm(`Are you sure you want to deactivate user ${username}? They won't be able to log in.`)) return;
     try {
@@ -61,13 +92,9 @@ export default function AdminUsersPage() {
     }
   };
 
-  // --- UPDATED ROLE HANDLER WITH CONFIRMATION ---
   const handleRoleChange = async (username, newRole) => {
-    // Επιβεβαίωση πριν την αλλαγή
     const confirmMessage = `Are you sure you want to change ${username}'s role to ${newRole.toUpperCase()}?`;
-
     if (!window.confirm(confirmMessage)) {
-      // Αν ακυρώσει, ξαναφορτώνουμε τα δεδομένα για να επανέλθει το dropdown στην αρχική τιμή
       fetchUsers();
       return;
     }
@@ -92,6 +119,9 @@ export default function AdminUsersPage() {
     );
   });
 
+  // Μετράμε πόσοι είναι ανενεργοί για να δούμε αν θα εμφανίσουμε το κουμπί
+  const inactiveCount = users.filter(u => !u.active).length;
+
   if (loading && users.length === 0) return <div className="p-6">Loading users...</div>;
   if (error) return <div className="p-6 text-red-500 font-bold">{error}</div>;
 
@@ -99,6 +129,25 @@ export default function AdminUsersPage() {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-800">User Management</h1>
+        
+        {/* --- ACTIVATE ALL BUTTON --- */}
+        {inactiveCount > 0 && (
+            <button 
+                onClick={handleActivateAll}
+                disabled={activatingAll}
+                className="flex items-center bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition shadow-sm disabled:opacity-70"
+            >
+                {activatingAll ? (
+                    <>
+                        <Loader className="w-5 h-5 mr-2 animate-spin" /> Activating...
+                    </>
+                ) : (
+                    <>
+                        <CheckCircle className="w-5 h-5 mr-2" /> Activate All ({inactiveCount})
+                    </>
+                )}
+            </button>
+        )}
       </div>
 
       {/* Search Bar */}

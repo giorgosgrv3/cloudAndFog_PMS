@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/endpoints';
-import { User, Mail, Shield, Activity } from 'lucide-react';
+import { Mail, Shield, Activity } from 'lucide-react';
 
 export default function UserProfilePage() {
   const [user, setUser] = useState(null);
@@ -10,7 +10,6 @@ export default function UserProfilePage() {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        // Καλούμε το /users/me
         const { data } = await api.auth.getMe();
         setUser(data);
       } catch (err) {
@@ -49,48 +48,18 @@ export default function UserProfilePage() {
             <p className="text-gray-500 text-lg mb-6">@{user.username}</p>
 
             <div className="grid grid-cols-1 gap-6">
-                
-                {/* Email */}
                 <div className="flex items-center p-4 bg-gray-50 rounded-lg">
-                    <div className="p-3 bg-blue-100 rounded-full mr-4">
-                        <Mail className="w-6 h-6 text-blue-600" />
-                    </div>
-                    <div>
-                        <div className="text-xs text-gray-500 uppercase font-semibold">Email Address</div>
-                        <div className="text-gray-800 font-medium">{user.email}</div>
-                    </div>
+                    <div className="p-3 bg-blue-100 rounded-full mr-4"><Mail className="w-6 h-6 text-blue-600" /></div>
+                    <div><div className="text-xs text-gray-500 uppercase font-semibold">Email Address</div><div className="text-gray-800 font-medium">{user.email}</div></div>
                 </div>
-
-                {/* Role */}
                 <div className="flex items-center p-4 bg-gray-50 rounded-lg">
-                    <div className="p-3 bg-purple-100 rounded-full mr-4">
-                        <Shield className="w-6 h-6 text-purple-600" />
-                    </div>
-                    <div>
-                        <div className="text-xs text-gray-500 uppercase font-semibold">Role</div>
-                        <div className="text-gray-800 font-medium capitalize flex items-center">
-                            {user.role.replace('_', ' ')}
-                        </div>
-                    </div>
+                    <div className="p-3 bg-purple-100 rounded-full mr-4"><Shield className="w-6 h-6 text-purple-600" /></div>
+                    <div><div className="text-xs text-gray-500 uppercase font-semibold">Role</div><div className="text-gray-800 font-medium capitalize">{user.role.replace('_', ' ')}</div></div>
                 </div>
-
-                {/* Status */}
                 <div className="flex items-center p-4 bg-gray-50 rounded-lg">
-                    <div className={`p-3 rounded-full mr-4 ${user.active ? 'bg-green-100' : 'bg-red-100'}`}>
-                        <Activity className={`w-6 h-6 ${user.active ? 'text-green-600' : 'text-red-600'}`} />
-                    </div>
-                    <div>
-                        <div className="text-xs text-gray-500 uppercase font-semibold">Account Status</div>
-                        <div className="font-medium">
-                            {user.active ? (
-                                <span className="text-green-700">Active</span>
-                            ) : (
-                                <span className="text-red-700">Inactive</span>
-                            )}
-                        </div>
-                    </div>
+                    <div className={`p-3 rounded-full mr-4 ${user.active ? 'bg-green-100' : 'bg-red-100'}`}><Activity className={`w-6 h-6 ${user.active ? 'text-green-600' : 'text-red-600'}`} /></div>
+                    <div><div className="text-xs text-gray-500 uppercase font-semibold">Account Status</div><div className="font-medium">{user.active ? <span className="text-green-700">Active</span> : <span className="text-red-700">Inactive</span>}</div></div>
                 </div>
-
             </div>
         </div>
       </div>

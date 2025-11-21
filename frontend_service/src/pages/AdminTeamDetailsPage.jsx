@@ -11,8 +11,8 @@ export default function AdminTeamDetailsPage() {
   // Data States
   const [team, setTeam] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [leaders, setLeaders] = useState([]);
-  const [allUsers, setAllUsers] = useState([]); // ΝΕΟ: Όλοι οι χρήστες για την προσθήκη μέλους
+  const [leaders, setLeaders] = useState([]); // (Δεν χρησιμοποιείται πια για το dropdown, αλλά το κρατάμε αν χρειαστεί)
+  const [allUsers, setAllUsers] = useState([]); 
   
   // UI States
   const [loading, setLoading] = useState(true);
@@ -23,13 +23,24 @@ export default function AdminTeamDetailsPage() {
   const [isChangingLeader, setIsChangingLeader] = useState(false);
   const [newLeader, setNewLeader] = useState('');
 
-  // --- ADD MEMBER STATES ---
+  // Add Member State
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [selectedNewMember, setSelectedNewMember] = useState('');
 
   // Task Filters
   const [taskStatusFilter, setTaskStatusFilter] = useState('');
   const [sortByDue, setSortByDue] = useState(false);
+
+  const getErrorMessage = (err) => {
+    if (err.response?.data?.detail) {
+        const detail = err.response.data.detail;
+        if (typeof detail === 'object') {
+            return JSON.stringify(detail);
+        }
+        return detail;
+    }
+    return 'An unexpected error occurred.';
+  };
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -54,16 +65,14 @@ export default function AdminTeamDetailsPage() {
         setTeam(teamRes.data);
         setEditForm({ name: teamRes.data.name, description: teamRes.data.description });
         
-        // Αποθηκεύουμε όλους τους χρήστες για το Add Member dropdown
-        setAllUsers(usersRes.data); 
-
-        // Φιλτράρουμε τους Leaders για το Change Leader dropdown
-        setLeaders(usersRes.data.filter(u => u.role === 'team_leader'));
+        // Αποθηκεύουμε όλους τους χρήστες (ενεργούς)
+        setAllUsers(usersRes.data.filter(u => u.active));
+        setLeaders(usersRes.data.filter(u => u.role === 'team_leader')); // (Προαιρετικό πλέον)
         
         await fetchTasks();
 
       } catch (err) {
-        alert("Failed to load team details.");
+        alert(`Failed to load team details: ${getErrorMessage(err)}`);
         navigate('/admin/teams');
       } finally {
         setLoading(false);
@@ -84,20 +93,21 @@ export default function AdminTeamDetailsPage() {
       setTeam({ ...team, ...editForm });
       setIsEditing(false);
     } catch (err) {
-      alert("Failed to update team details.");
+      alert(`Failed to update team details: ${getErrorMessage(err)}`);
     }
   };
 
   const handleChangeLeader = async () => {
     if (!newLeader) return;
     if (!window.confirm(`Change leader to ${newLeader}?`)) return;
+    
     try {
       await api.teams.assignLeader(teamId, newLeader);
       setTeam({ ...team, leader_id: newLeader });
       setIsChangingLeader(false);
       setNewLeader('');
     } catch (err) {
-      alert(`Error: ${err.response?.data?.detail || 'Failed to change leader'}`);
+      alert(`Failed to change leader: ${getErrorMessage(err)}`);
     }
   };
 
@@ -110,27 +120,22 @@ export default function AdminTeamDetailsPage() {
         member_ids: team.member_ids.filter(m => m !== memberUsername)
       });
     } catch (err) {
-      alert("Failed to remove member.");
+      alert(`Failed to remove member: ${getErrorMessage(err)}`);
     }
   };
 
-  // --- NEW HANDLER: ADD MEMBER ---
   const handleAddMember = async () => {
     if (!selectedNewMember) return;
     try {
         await api.teams.addMember(teamId, selectedNewMember);
-        
-        // Update local state
         setTeam({
             ...team,
             member_ids: [...team.member_ids, selectedNewMember]
         });
-        
-        // Reset UI
         setSelectedNewMember('');
         setIsAddingMember(false);
     } catch (err) {
-        alert(`Failed to add member: ${err.response?.data?.detail || 'Unknown error'}`);
+        alert(`Failed to add member: ${getErrorMessage(err)}`);
     }
   };
 
@@ -140,23 +145,28 @@ export default function AdminTeamDetailsPage() {
       await api.teams.delete(teamId);
       navigate('/admin/teams');
     } catch (err) {
-      alert("Failed to delete team.");
+      alert(`Failed to delete team: ${getErrorMessage(err)}`);
     }
   };
 
   if (loading) return <div className="p-8 text-center">Loading Team...</div>;
   if (!team) return null;
 
-  const leaderOptions = leaders.map(l => ({ value: l.username, label: l.username }));
+  // --- 1. LEADER OPTIONS: ONLY EXISTING MEMBERS ---
+  const leaderOptions = allUsers
+    .filter(u => team.member_ids.includes(u.username)) // Κρατάμε μόνο όσους είναι ήδη μέλη
+    .map(u => ({ 
+        value: u.username, 
+        label: `${u.username} (${u.first_name} ${u.last_name}) - [${u.role}]` 
+    }));
   
-  // Υπολογισμός διαθέσιμων μελών (Αυτοί που ΔΕΝ είναι ήδη στην ομάδα)
+  // --- 2. ADD MEMBER OPTIONS: ONLY NON-MEMBERS ---
   const availableMembersOptions = allUsers
     .filter(u => !team.member_ids.includes(u.username))
     .map(u => ({ value: u.username, label: `${u.username} (${u.first_name} ${u.last_name})` }));
 
   return (
     <div>
-      {/* BACK BUTTON */}
       <button onClick={() => navigate('/admin/teams')} className="mb-4 text-gray-500 hover:text-gray-800">
         ← Back to Teams
       </button>
@@ -179,48 +189,32 @@ export default function AdminTeamDetailsPage() {
                   onChange={(e) => setEditForm({...editForm, description: e.target.value})}
                 />
                 <div className="flex space-x-2">
-                    <button onClick={handleUpdateDetails} className="flex items-center bg-green-600 text-white px-3 py-1 rounded text-sm">
-                        <Save className="w-4 h-4 mr-1" /> Save
-                    </button>
-                    <button onClick={() => setIsEditing(false)} className="flex items-center bg-gray-500 text-white px-3 py-1 rounded text-sm">
-                        <X className="w-4 h-4 mr-1" /> Cancel
-                    </button>
+                    <button onClick={handleUpdateDetails} className="flex items-center bg-green-600 text-white px-3 py-1 rounded text-sm"><Save className="w-4 h-4 mr-1" /> Save</button>
+                    <button onClick={() => setIsEditing(false)} className="flex items-center bg-gray-500 text-white px-3 py-1 rounded text-sm"><X className="w-4 h-4 mr-1" /> Cancel</button>
                 </div>
               </div>
             ) : (
               <>
                 <h1 className="text-3xl font-bold text-gray-900 flex items-center">
                     {team.name}
-                    <button onClick={() => setIsEditing(true)} className="ml-3 text-gray-400 hover:text-blue-600" title="Edit Details">
-                        <Edit2 className="w-5 h-5" />
-                    </button>
+                    <button onClick={() => setIsEditing(true)} className="ml-3 text-gray-400 hover:text-blue-600" title="Edit Details"><Edit2 className="w-5 h-5" /></button>
                 </h1>
                 <p className="text-gray-500 mt-2">{team.description || "No description provided."}</p>
               </>
             )}
           </div>
-          
-          <button onClick={handleDeleteTeam} className="text-red-600 hover:bg-red-50 p-2 rounded transition" title="Delete Team">
-            <Trash2 className="w-6 h-6" />
-          </button>
+          <button onClick={handleDeleteTeam} className="text-red-600 hover:bg-red-50 p-2 rounded transition" title="Delete Team"><Trash2 className="w-6 h-6" /></button>
         </div>
-
         <div className="mt-6 flex flex-wrap gap-6 text-sm text-gray-600 border-t pt-4">
-            <div className="flex items-center">
-                <Calendar className="w-4 h-4 mr-2" /> Created: {new Date(team.created_at).toLocaleDateString()}
-            </div>
-            <div className="flex items-center">
-                <Users className="w-4 h-4 mr-2" /> Members: {team.member_ids.length}
-            </div>
-            <div className="flex items-center">
-                <Briefcase className="w-4 h-4 mr-2" /> Total Tasks: {tasks.length}
-            </div>
+            <div className="flex items-center"><Calendar className="w-4 h-4 mr-2" /> Created: {new Date(team.created_at).toLocaleDateString()}</div>
+            <div className="flex items-center"><Users className="w-4 h-4 mr-2" /> Members: {team.member_ids.length}</div>
+            <div className="flex items-center"><Briefcase className="w-4 h-4 mr-2" /> Total Tasks: {tasks.length}</div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
-        {/* LEFT COLUMN: MEMBERS & LEADER */}
+        {/* LEFT COLUMN */}
         <div className="space-y-6">
             {/* LEADER CARD */}
             <div className="bg-white shadow rounded-lg p-6">
@@ -228,98 +222,54 @@ export default function AdminTeamDetailsPage() {
                 {!isChangingLeader ? (
                     <div className="flex justify-between items-center">
                         <div className="flex items-center">
-                            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold mr-3">
-                                {team.leader_id.substring(0, 2).toUpperCase()}
-                            </div>
-                            <Link to={`/admin/users/${team.leader_id}`} className="font-medium text-gray-900 hover:underline">
-                                {team.leader_id}
-                            </Link>
+                            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold mr-3">{team.leader_id.substring(0, 2).toUpperCase()}</div>
+                            <Link to={`/admin/users/${team.leader_id}`} className="font-medium text-gray-900 hover:underline">{team.leader_id}</Link>
                         </div>
-                        <button onClick={() => setIsChangingLeader(true)} className="text-xs text-blue-600 hover:underline">
-                            Change
-                        </button>
+                        <button onClick={() => setIsChangingLeader(true)} className="text-xs text-blue-600 hover:underline">Change</button>
                     </div>
                 ) : (
                     <div className="space-y-3">
-                        <SearchableSelect 
-                            options={leaderOptions}
-                            value={newLeader}
-                            onChange={setNewLeader}
-                            placeholder="Search leader..."
-                        />
+                        <SearchableSelect options={leaderOptions} value={newLeader} onChange={setNewLeader} placeholder="Select member..." />
+                        
+                        <p className="text-[10px] text-gray-500 leading-tight">
+                            Note: Only existing team members can be promoted to Leader.
+                        </p>
+
                         <div className="flex space-x-2 text-xs">
-                             <button onClick={handleChangeLeader} disabled={!newLeader} className="bg-blue-600 text-white px-2 py-1 rounded disabled:opacity-50">
-                                Confirm
-                            </button>
-                            <button onClick={() => setIsChangingLeader(false)} className="bg-gray-200 text-gray-700 px-2 py-1 rounded">
-                                Cancel
-                            </button>
+                             <button onClick={handleChangeLeader} disabled={!newLeader} className="bg-blue-600 text-white px-2 py-1 rounded disabled:opacity-50">Confirm</button>
+                            <button onClick={() => setIsChangingLeader(false)} className="bg-gray-200 text-gray-700 px-2 py-1 rounded">Cancel</button>
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* MEMBERS LIST & ADD MEMBER */}
+            {/* MEMBERS LIST */}
             <div className="bg-white shadow rounded-lg p-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-gray-700 uppercase text-xs tracking-wider">Members ({team.member_ids.length})</h3>
-                    {!isAddingMember && (
-                        <button 
-                            onClick={() => setIsAddingMember(true)}
-                            className="text-xs flex items-center text-blue-600 hover:text-blue-800 font-medium"
-                        >
-                            <Plus className="w-3 h-3 mr-1" /> Add
-                        </button>
-                    )}
-                </div>
-
-                {/* ADD MEMBER FORM */}
+                <h3 className="font-bold text-gray-700 mb-4 uppercase text-xs tracking-wider">Team Members ({team.member_ids.length})</h3>
+                
+                {/* ADD MEMBER (ADMIN) */}
+                {!isAddingMember && (
+                    <button onClick={() => setIsAddingMember(true)} className="text-xs text-blue-600 hover:underline mb-4 flex items-center">+ Add Member</button>
+                )}
                 {isAddingMember && (
-                    <div className="mb-4 p-3 bg-blue-50 rounded border border-blue-100">
-                        <div className="text-xs font-semibold text-blue-800 mb-2">Add New Member</div>
-                        <SearchableSelect 
-                            options={availableMembersOptions}
-                            value={selectedNewMember}
-                            onChange={setSelectedNewMember}
-                            placeholder="Select user..."
-                        />
+                    <div className="mb-4 p-2 bg-blue-50 rounded border border-blue-100">
+                        <SearchableSelect options={availableMembersOptions} value={selectedNewMember} onChange={setSelectedNewMember} placeholder="Select user..." />
                         <div className="flex justify-end space-x-2 mt-2">
-                            <button 
-                                onClick={() => setIsAddingMember(false)}
-                                className="text-xs text-gray-500 hover:text-gray-700"
-                            >
-                                Cancel
-                            </button>
-                            <button 
-                                onClick={handleAddMember}
-                                disabled={!selectedNewMember}
-                                className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-50"
-                            >
-                                Add
-                            </button>
+                            <button onClick={() => setIsAddingMember(false)} className="text-xs text-gray-500">Cancel</button>
+                            <button onClick={handleAddMember} disabled={!selectedNewMember} className="text-xs bg-blue-600 text-white px-2 py-1 rounded">Add</button>
                         </div>
                     </div>
                 )}
 
                 <ul className="divide-y divide-gray-100">
                     {team.member_ids.map(member => (
-                        <li key={member} className="py-3 flex justify-between items-center group">
+                        <li key={member} className="py-3 flex justify-between items-center">
                             <div className="flex items-center">
-                                <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-xs mr-3">
-                                    {member.substring(0, 2).toUpperCase()}
-                                </div>
-                                <Link to={`/admin/users/${member}`} className="text-sm font-medium text-gray-700 hover:underline">
-                                    {member}
-                                </Link>
+                                <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-xs mr-3">{member.substring(0, 2).toUpperCase()}</div>
+                                <Link to={`/admin/users/${member}`} className="text-sm font-medium text-gray-700 hover:underline">{member}</Link>
                             </div>
                             {member !== team.leader_id && (
-                                <button 
-                                    onClick={() => handleRemoveMember(member)}
-                                    className="text-gray-300 hover:text-red-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    title="Remove member"
-                                >
-                                    <UserMinus className="w-4 h-4" />
-                                </button>
+                                <button onClick={() => handleRemoveMember(member)} className="text-red-400 hover:text-red-600 p-1" title="Remove member"><UserMinus className="w-4 h-4" /></button>
                             )}
                         </li>
                     ))}
@@ -328,37 +278,22 @@ export default function AdminTeamDetailsPage() {
             </div>
         </div>
 
-        {/* RIGHT COLUMN: TASKS WITH FILTERS */}
+        {/* RIGHT COLUMN: TASKS */}
         <div className="md:col-span-2">
             <div className="bg-white shadow rounded-lg overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
                     <h3 className="font-bold text-gray-700 uppercase text-xs tracking-wider">Team Tasks</h3>
                     <div className="flex items-center space-x-2">
                         <div className="relative">
-                            <select 
-                                value={taskStatusFilter}
-                                onChange={(e) => setTaskStatusFilter(e.target.value)}
-                                className="appearance-none bg-white border border-gray-300 text-gray-700 py-1 px-3 pr-8 rounded leading-tight focus:outline-none focus:bg-white focus:border-blue-500 text-xs font-medium"
-                            >
+                            <select value={taskStatusFilter} onChange={(e) => setTaskStatusFilter(e.target.value)} className="appearance-none bg-white border border-gray-300 text-gray-700 py-1 px-3 pr-8 rounded leading-tight focus:outline-none focus:bg-white focus:border-blue-500 text-xs font-medium">
                                 <option value="">ALL STATUSES</option>
                                 <option value="TODO">TODO</option>
                                 <option value="IN_PROGRESS">IN PROGRESS</option>
                                 <option value="DONE">DONE</option>
                             </select>
-                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                                <Filter className="w-3 h-3" />
-                            </div>
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700"><Filter className="w-3 h-3" /></div>
                         </div>
-                        <button 
-                            onClick={() => setSortByDue(!sortByDue)}
-                            className={`flex items-center px-3 py-1 rounded border text-xs font-medium transition-colors
-                                ${sortByDue 
-                                    ? 'bg-blue-100 border-blue-300 text-blue-800' 
-                                    : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                        >
-                            <ArrowUpDown className="w-3 h-3 mr-1" />
-                            Sort by Due Date
-                        </button>
+                        <button onClick={() => setSortByDue(!sortByDue)} className={`flex items-center px-3 py-1 rounded border text-xs font-medium transition-colors ${sortByDue ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}><ArrowUpDown className="w-3 h-3 mr-1" /> Sort by Due Date</button>
                     </div>
                 </div>
                 
@@ -378,44 +313,22 @@ export default function AdminTeamDetailsPage() {
                                 tasks.map(task => (
                                     <tr key={task.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-4 text-sm font-bold">
-                                        <Link 
-                                            to={`/admin/tasks/${task.id}`} 
-                                            className="text-blue-600 hover:text-blue-800 hover:underline"
-                                        >
-                                            {task.title}
-                                        </Link>
-                                    </td>
+                                            <Link to={`/admin/tasks/${task.id}`} className="text-blue-600 hover:text-blue-800 hover:underline">{task.title}</Link>
+                                        </td>
                                         <td className="px-6 py-4 text-sm text-gray-600">
-                                            <Link to={`/admin/users/${task.assigned_to}`} className="hover:underline">
-                                                {task.assigned_to}
-                                            </Link>
+                                            <Link to={`/admin/users/${task.assigned_to}`} className="hover:underline">{task.assigned_to}</Link>
                                         </td>
                                         <td className="px-6 py-4">
-                                            <span className={`px-2 py-1 text-xs rounded-full font-semibold 
-                                                ${task.status === 'DONE' ? 'bg-green-100 text-green-800' : 
-                                                  task.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-800' : 
-                                                  'bg-gray-100 text-gray-800'}`}>
-                                                {task.status.replace('_', ' ')}
-                                            </span>
+                                            <span className={`px-2 py-1 text-xs rounded-full font-semibold ${task.status === 'DONE' ? 'bg-green-100 text-green-800' : task.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>{task.status.replace('_', ' ')}</span>
                                         </td>
                                         <td className="px-6 py-4 text-sm">
-                                            <span className={`font-bold text-xs
-                                                ${task.priority === 'URGENT' ? 'text-red-600' : 
-                                                  task.priority === 'MEDIUM' ? 'text-orange-500' : 'text-green-600'}`}>
-                                                {task.priority}
-                                            </span>
+                                            <span className={`font-bold text-xs ${task.priority === 'URGENT' ? 'text-red-600' : task.priority === 'MEDIUM' ? 'text-orange-500' : 'text-green-600'}`}>{task.priority}</span>
                                         </td>
-                                        <td className="px-6 py-4 text-sm text-gray-500">
-                                            {new Date(task.due_date).toLocaleDateString()}
-                                        </td>
+                                        <td className="px-6 py-4 text-sm text-gray-500">{new Date(task.due_date).toLocaleDateString()}</td>
                                     </tr>
                                 ))
                             ) : (
-                                <tr>
-                                    <td colSpan="5" className="px-6 py-8 text-center text-gray-500">
-                                        No tasks found matching current filters.
-                                    </td>
-                                </tr>
+                                <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-500">No tasks found matching current filters.</td></tr>
                             )}
                         </tbody>
                     </table>
