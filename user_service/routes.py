@@ -80,8 +80,7 @@ def update_user_role(
 ):
     """
     (Admin Only) Changes a user's role.
-    This endpoint is used for system synchronization (Team Leader/Member)
-    and manual promotion to Admin.
+    Prevents demotion of active Team Leaders and prevents unsupported promotions (Member -> Leader).
     """
     
     user_to_update = db.query(User).filter(User.username == username).first()
@@ -89,16 +88,58 @@ def update_user_role(
     if not user_to_update:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # --- THE CORRECTED CHECK ---
-    # Prevents demotion of an Admin (e.g., from 'admin' to 'member'),
-    # but allows all other system synchronization calls to pass.
+    # 1. PREVENT ADMIN DEMOTION (Existing Check)
     if user_to_update.role == Role.ADMIN and payload.role != Role.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot demote an Admin account via the API."
         )
-    # --- END OF CORRECTED CHECK ---
+    
+    # 2. NEW CHECK: PREVENT MEMBER -> LEADER PROMOTION VIA ADMIN PANEL (Manual promotion)
+    # The system is designed for a Member to become a Leader automatically 
+    # when assigned to lead a team. Manual promotion is disallowed.
+    if user_to_update.role == Role.MEMBER and payload.role == Role.TEAM_LEADER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot promote Member to Team Leader manually. The user must be assigned as a leader to a team for the role to update automatically."
+        )
+
+
+    # 3. CHECK: PREVENT TEAM LEADER DEMOTION TO MEMBER (Existing Check)
+    if user_to_update.role == Role.TEAM_LEADER and payload.role == Role.MEMBER:
         
+        is_leader = False
+        
+        # --- ISC: Check Team Service for Active Teams ---
+        try:
+            url = f"http://team_service:8002/teams/internal/is-leader/{username}"
+            with httpx.Client() as client:
+                response = client.get(url)
+            
+            response.raise_for_status() 
+            data = response.json()
+            is_leader = data.get("is_leader", False)
+            
+        except httpx.ConnectError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Team service is unreachable. Cannot verify leader status for demotion."
+            )
+        except Exception as e:
+            print(f"Error during leadership check for role update: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An error occurred while verifying team leadership."
+            )
+        
+        # --- BUSINESS RULE ENFORCEMENT ---
+        if is_leader:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote user to Member: User is currently leading one or more teams. Reassign their teams first."
+            )
+            
+    # 4. Apply the Role Update (If all checks pass)
     user_to_update.role = payload.role
     db.commit()
     db.refresh(user_to_update)
