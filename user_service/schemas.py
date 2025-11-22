@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from pydantic import ConfigDict
 from models import Role
@@ -19,6 +20,7 @@ class UserOut(BaseModel):
     last_name:  str
     role:       Role
     active:     bool
+    avatar_filename: Optional[str] = None # <--- NEW FIELD
 
 class Token(BaseModel):
     # schema for what we return to user after login

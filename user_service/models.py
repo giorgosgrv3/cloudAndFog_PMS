@@ -21,3 +21,4 @@ class User(Base):
     # Χρησιμοποιούμε SAEnum για ασφάλεια
     role = Column(SAEnum(Role), default=Role.MEMBER)
     active = Column(Boolean, default=False)
+    avatar_filename = Column(String(255), nullable=True)

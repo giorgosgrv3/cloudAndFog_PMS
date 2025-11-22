@@ -1,5 +1,8 @@
 import { userClient, teamClient, taskClient } from './axios';
 
+// --- MISSING CONSTANT ADDED HERE ---
+const USER_BASE_URL = 'http://localhost:8001'; 
+
 export const api = {
     auth: {
         login: (credentials) => {
@@ -21,6 +24,13 @@ export const api = {
         deactivate: (username) => userClient.patch(`/users/${username}/deactivate`),
         delete: (username) => userClient.delete(`/users/${username}`),
         updateRole: (username, newRole) => userClient.patch(`/users/${username}/role`, { role: newRole }),
+
+        // --- AVATAR ENDPOINTS ---
+        uploadAvatar: (formData) => userClient.post('/users/me/avatar', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        }),
+        // This function needs the constant defined above!
+        getAvatarUrl: (username) => `${USER_BASE_URL}/users/${username}/avatar`,
     },
     teams: {
         getAll: () => teamClient.get('/teams'),
@@ -31,7 +41,8 @@ export const api = {
         
         addMember: (teamId, username) => teamClient.post(`/teams/${teamId}/members`, { username }),
         removeMember: (teamId, username) => teamClient.delete(`/teams/${teamId}/members/${username}`),
-        assignLeader: (teamId, username) => teamClient.patch(`/teams/${teamId}/assign-leader`, { new_leader_username: username }),    },
+        assignLeader: (teamId, username) => teamClient.patch(`/teams/${teamId}/assign-leader`, { new_leader_username: username }),    
+    },
     tasks: {
         getMyTasks: (filters = {}) => taskClient.get('/tasks/me', { params: filters }),
         getByTeam: (teamId, filters = {}) => taskClient.get(`/tasks/team/${teamId}`, { params: filters }),
@@ -50,7 +61,7 @@ export const api = {
         }),
         getAttachments: (taskId) => taskClient.get(`/tasks/${taskId}/attachments`),
         downloadFile: (taskId, attachmentId) => taskClient.get(`/tasks/${taskId}/attachments/${attachmentId}`, {
-            responseType: 'blob', // Σημαντικό: Λέμε στο Axios ότι περιμένουμε binary αρχείο
+            responseType: 'blob', 
         }), 
         deleteAttachment: (taskId, attachmentId) => taskClient.delete(`/tasks/${taskId}/attachments/${attachmentId}`),
     }

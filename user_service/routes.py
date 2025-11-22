@@ -1,8 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm 
 from sqlalchemy.orm import Session
-from schemas import UserCreate, UserOut, Token, UserRoleUpdate # <-- Πρόσθεσε το UserRoleUpdate
+from typing import Annotated, List
+from schemas import UserCreate, UserOut, Token, TokenData, UserRoleUpdate # <-- Πρόσθεσε το UserRoleUpdate
 import httpx
+import shutil
+import os
+from pathlib import Path
 
 # ΑΛΛΑΓΗ: Πρόσθεσε τα get_current_user & get_current_admin_user
 from security import (
@@ -14,6 +20,10 @@ from security import (
 )
 from models import User, Role
 from db import get_db
+
+# Setup Upload Directory
+AVATAR_DIR = Path("user_avatars")
+AVATAR_DIR.mkdir(exist_ok=True)
 
 router = APIRouter(prefix="/users") # Αφαίρεσε το tags=["users"]
 
@@ -285,3 +295,56 @@ def get_user(
         raise HTTPException(status_code=404, detail="User not found")
     return user
     
+
+    # --- NEW: Upload Avatar ---
+@router.post("/me/avatar", response_model=UserOut)
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 1. Validate File Type
+    if file.content_type not in ["image/jpeg", "image/png"]:
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid file format. Only JPG and PNG are allowed."
+        )
+
+    # 2. Generate a consistent filename for this user
+    # We overwrite the previous one to save space.
+    # Extension:
+    ext = ".png" if file.content_type == "image/png" else ".jpg"
+    filename = f"{current_user.username}_avatar{ext}"
+    file_path = AVATAR_DIR / filename
+
+    # 3. Save to Disk
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not save image file.")
+
+    # 4. Update Database
+    user_row = db.query(User).filter(User.username == current_user.username).first()
+    user_row.avatar_filename = filename
+    db.commit()
+    db.refresh(user_row)
+
+    return user_row
+
+# --- NEW: Get Avatar ---
+@router.get("/{username}/avatar")
+async def get_user_avatar(username: str, db: Session = Depends(get_db)):
+    # 1. Check if user exists (Optional, but good for 404s)
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not user.avatar_filename:
+        # Return a 404 if no custom avatar, Frontend should show default
+        raise HTTPException(status_code=404, detail="Avatar not found")
+
+    # 2. Check if file exists on disk
+    file_path = AVATAR_DIR / user.avatar_filename
+    if not file_path.exists():
+        # Fallback if DB says yes but file is gone
+        raise HTTPException(status_code=404, detail="Avatar file missing")
+
+    return FileResponse(file_path)

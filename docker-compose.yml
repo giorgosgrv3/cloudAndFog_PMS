@@ -41,6 +41,7 @@ services:
     ports: ["8001:8001"]
     volumes:
       - ./user_service:/app
+      - user_avatars:/app/user_avatars # <--- ADD THIS LINE
     restart: unless-stopped
 
   # --- Team Service (NEW!) ---
@@ -73,3 +74,4 @@ services:
 volumes:
   mysql_data:
   mongo_data:
+  user_avatars: # <--- ADD THIS LINE
